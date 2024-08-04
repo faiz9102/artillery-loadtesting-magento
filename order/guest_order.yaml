@@ -1,0 +1,118 @@
+config:
+  target: "http://magento.local/index.php"  # Magento base URL
+  phases:
+    - name: "Single Guest User Test"
+      duration: 1   # test duration in seconds
+      arrivalRate: 1  # number of VUs created per second
+  defaults:
+    headers:
+      content-type: "application/json"
+  processor: "./processor.js"  # path to the hooks processor file file
+  payload:
+    - path: "./payload/products.csv" # path to the products sku CSV file
+      fields:
+        - "sku"
+  plugins:
+    ensure: {}
+  ensure:
+    thresholds:
+      - http.response_time.p99: 1000  # 99th percentile response time
+      - http.response_time.p95: 700   # 95th percentile response time
+scenarios:
+  - name: "Magento 2 Guest Random Order"
+    flow:
+      # guest cartId request
+      - post:
+          url: "/rest/V1/guest-carts"
+          afterResponse: "captureGuestCartId"
+          
+      - log: "\nguestCartID : {{ guestCartId }} \n"
+
+      # add product to guest cart
+      - post:
+          url: "/rest/V1/guest-carts/{{ guestCartId }}/items"
+          beforeRequest: "getRandomQty"
+          json:
+            cartItem:
+              quote_id: "{{ guestCartId }}"
+              sku: "{{ sku }}"  # product SKU
+              qty: "{{ qty }}"
+
+      - log: "added {{ qty }} x {{ sku }} to cart\n"
+
+      # estimate shipping
+      - post:
+          url: "/rest/V1/guest-carts/{{ guestCartId }}/estimate-shipping-methods"
+          json:
+            address:
+              region: "New York"
+              region_id: 43
+              region_code: "NY"
+              country_id: "US"
+              street: ["123 Main Street"]
+              telephone: "512-555-1111"
+              postcode: "10001"
+              city: "New York"
+              firstname: "John"
+              lastname: "Doe"
+
+      - log: "fetched shipping methods\n"
+
+      # set shipping information
+      - post:
+          url: "/rest/V1/guest-carts/{{ guestCartId }}/shipping-information"
+          json:
+            addressInformation:
+              shipping_address:
+                region: "New York"
+                region_id: 43
+                region_code: "NY"
+                country_id: "US"
+                street: ["123 Main Street"]
+                telephone: "512-555-1111"
+                postcode: "10001"
+                city: "New York"
+                firstname: "John"
+                lastname: "Doe"
+                email: "guest@example.com" 
+                same_as_billing: 1
+              billing_address:
+                region: "New York"
+                region_id: 43
+                region_code: "NY"
+                country_id: "US"
+                street: ["123 Main Street"]
+                telephone: "512-555-1111"
+                postcode: "10001"
+                city: "New York"
+                firstname: "John"
+                lastname: "Doe"
+                email: "guest@example.com"  
+              shipping_carrier_code: "flatrate"
+              shipping_method_code: "flatrate"
+
+      - log: "shipping and billing have been set.\n"
+
+
+      # set payment information and place order
+      - post:
+          url: "/rest/V1/guest-carts/{{ guestCartId }}/payment-information"
+          afterResponse: "captureOrderID"
+          json:
+            paymentMethod:
+              method: "checkmo"
+            billing_address:
+              region: "New York"
+              region_id: 43
+              region_code: "NY"
+              country_id: "US"
+              street: ["123 Main Street"]
+              telephone: "512-555-1111"
+              postcode: "10001"
+              city: "New York"
+              firstname: "John"
+              lastname: "Doe"
+              email: "guest@example.com" 
+            email: "guest@example.com" 
+
+      - log: "order has been placed with ID: {{ orderId }}.\n"

@@ -1,0 +1,157 @@
+# Description: This script creates an order in Magento 2 using the REST API.
+# It logs in a customer, creates a cart, adds a product to the cart, estimates shipping, sets shipping information, sets payment information, and logs out the customer.
+# It uses data from magento sample-data modules for the customer and product
+config:
+  target: "http://magento.local/index.php"  # Magento base URL
+  phases:
+    - name: "Single Customer Test"
+      duration: 1   # test duration in seconds
+      arrivalRate: 1  # number of VUs created per second
+  defaults:
+    headers:
+      content-type: "application/json"
+  processor: "./processor.js"  # path to the hooks processor file file
+  payload:
+    - path: "./payload/users.csv" # path to the users CSV file
+      fields:
+        - "email"
+        - "password"
+        - "first_name"
+        - "last_name"
+    - path: "./payload/products.csv"  # path to the products sku CSV file
+      fields:
+      - "sku"
+  plugins:
+    ensure: {}
+  ensure:
+    thresholds:
+      - http.response_time.p99: 1000  # 99th percentile response time
+      - http.response_time.p95: 700   # 95th percentile response time
+    
+scenarios:
+  - name: "Magento 2 Customer Random Order"
+    flow:
+    # customer token request 
+      - post:
+          url: "/rest/V1/integration/customer/token"
+          afterResponse: "captureToken"
+          json:
+            username: "{{ email }}"  # customer email
+            password: "{{ password }}"  # customer password
+
+      - log: "authToken: {{ authToken }}"
+
+      # cartId/quoteId request
+      - post:
+          url: "/rest/V1/carts/mine"
+          afterResponse: "captureCartId"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+
+      - log: "cartId: {{ cartId }}"
+
+      # add product to cart
+      - post:
+          url: "/rest/V1/carts/mine/items"
+          beforeRequest: "getRandomQty"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          json:
+            cartItem:
+              quote_id: "{{ cartId }}"
+              sku: "{{ sku }}"
+              qty: "{{ qty }}"
+              product_option: {}
+              extension_attributes: {}
+
+      - log: "added {{ qty }} x {{ sku }} to cart\n"
+
+
+      # estimate shipping
+      - post:
+          url: "/rest/V1/carts/mine/estimate-shipping-methods"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          json:
+            address:
+              region: "New York"
+              region_id: 43
+              region_code: "NY"
+              country_id: "US"
+              street: ["123 Main Street"]
+              telephone: "512-555-1111"
+              postcode: "10001"
+              city: "New York"
+              firstname: "{{ first_name }}"
+              lastname: "{{ last_name }}"
+
+      - log: "fetched shipping methods\n"
+
+
+      # set shipping information
+      - post:
+          url: "/rest/V1/carts/mine/shipping-information"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          json:
+            addressInformation:
+              shipping_address:
+                region: "New York"
+                region_id: 43
+                region_code: "NY"
+                country_id: "US"
+                street: ["123 Main Street"]
+                telephone: "512-555-1111"
+                postcode: "10001"
+                city: "New York"
+                firstname: "{{ first_name }}"
+                lastname: "{{ last_name }}"
+                same_as_billing: 1
+              billing_address:
+                region: "New York"
+                region_id: 43
+                region_code: "NY"
+                country_id: "US"
+                street: ["123 Main Street"]
+                telephone: "512-555-1111"
+                postcode: "10001"
+                city: "New York"
+                firstname: "{{ first_name }}"
+                lastname: "{{ last_name }}"
+              shipping_carrier_code: "flatrate"
+              shipping_method_code: "flatrate"
+
+      - log: "shipping and billing have been set.\n"
+
+
+      # set payment information and place order
+      - post:
+          url: "/rest/V1/carts/mine/payment-information"
+          afterResponse: "captureOrderID"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          json:
+            paymentMethod:
+              method: "checkmo"
+            billing_address:
+              region: "New York"
+              region_id: 43
+              region_code: "NY"
+              country_id: "US"
+              street: ["123 Main Street"]
+              telephone: "512-555-1111"
+              postcode: "10001"
+              city: "New York"
+              firstname: "{{ first_name }}"
+              lastname: "{{ last_name }}"
+              email: "{{ email }}"
+            email: "{{ email }}"
+
+      - log: "order has been placed with ID: {{ orderId }}.\n"
+
+      - post:
+          url: "/rest/default/V1/integration/customer/revoke-customer-token"
+          headers:
+            Authorization : "Bearer {{ authToken }}"
+            
+      - log: "logged out\n"
